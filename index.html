@@ -150,6 +150,9 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
 .bbl{background:var(--bg2);border:1px solid var(--border);border-radius:13px 13px 13px 3px;padding:8px 12px;font-size:14px;line-height:1.55;word-break:break-word;box-shadow:var(--sh);}
 .msg.ow .bbl{background:var(--own-bg);border-color:var(--own-brd);border-radius:13px 13px 3px 13px;color:#7f1d1d;}
 .bbl img{max-width:240px;max-height:190px;border-radius:7px;display:block;margin-top:5px;cursor:pointer;}
+.bbl a.media-link{display:block;width:fit-content;max-width:100%;}
+.bbl a.media-link img{max-width:min(360px,100%);max-height:320px;object-fit:contain;}
+.bbl a.msg-link{color:var(--acc);text-decoration:underline;overflow-wrap:anywhere;}
 .bbl video{max-width:240px;border-radius:7px;display:block;margin-top:5px;}
 .bbl audio{display:block;margin-top:5px;width:195px;}
 .yt-wrap{margin-top:6px;border-radius:8px;overflow:hidden;width:260px;max-width:100%;}
@@ -536,7 +539,9 @@ window.addEventListener('load',function(){
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script>
+document.title='Peek-a-mouse · media-v4';
 const initializeApp = cfg => firebase.initializeApp(cfg);
 const getAuth = app => firebase.auth(app);
 const createUserWithEmailAndPassword = (auth,email,pass) => auth.createUserWithEmailAndPassword(email,pass);
@@ -545,6 +550,7 @@ const signOut = auth => auth.signOut();
 const onAuthStateChanged = (auth,cb) => auth.onAuthStateChanged(cb);
 const updateProfile = (user,data) => user.updateProfile(data);
 const getDatabase = app => firebase.database(app);
+const getStorage = app => firebase.storage(app);
 const ref = (db,path) => db.ref(path);
 const push = (r,val) => val===undefined ? r.push() : r.push(val);
 const set = (r,val) => r.set(val);
@@ -577,6 +583,7 @@ const cfg = {
 const fbApp = initializeApp(cfg);
 const auth  = getAuth(fbApp);
 const db    = getDatabase(fbApp);
+const st    = getStorage(fbApp);
 window.__authReady=true;
 window.__authLoadError='';
 
@@ -859,9 +866,10 @@ function renderMsg(msg,c){
   let ytMatch; const ytEmbeds=[];
   if(msg.text){let tmp=msg.text;while((ytMatch=ytRe.exec(tmp))!==null)ytEmbeds.push(ytMatch[1]);}
   (msg.media||[]).forEach(m=>{
-    if(m.type==='image')med+=`<img src="${m.url}" onclick="openLB('${m.url}')" loading="lazy">`;
-    else if(m.type==='video')med+=`<video src="${m.url}" controls style="max-width:260px;border-radius:8px;display:block;margin-top:5px;"></video>`;
-    else med+=`<audio src="${m.url}" controls playsinline preload="metadata" style="max-width:260px"></audio>`;
+    const src=safeMediaSrc(m.url); if(!src)return;
+    if(m.type==='image')med+=`<img src="${src}" onclick="openLB(this.src)" loading="lazy" alt="Изображение">`;
+    else if(m.type==='video')med+=`<video src="${src}" controls playsinline preload="metadata" style="max-width:260px;border-radius:8px;display:block;margin-top:5px;"></video>`;
+    else med+=`<audio src="${src}" controls playsinline preload="metadata" style="max-width:260px"></audio>`;
   });
   ytEmbeds.forEach(vid=>{
     med+=`<div class="yt-wrap"><iframe src="https://www.youtube.com/embed/${vid}" frameborder="0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe></div>`;
@@ -874,8 +882,34 @@ function renderMsg(msg,c){
   const senderDisplay = msg.sender ? msg.sender : '?';
   d.innerHTML=`<div class="mava ${gClass}">${ini(msg.sender)}</div>
     <div class="mb"><div class="mm"><span class="mf">${esc(senderDisplay)}</span><span>${t}</span></div>
-    <div class="bbl">${msg.text?esc(msg.text):''}${med}</div></div>`;
+    <div class="bbl">${formatMessageText(msg.text||'')}${med}</div></div>`;
   c.appendChild(d);
+}
+
+function safeMediaSrc(value){
+  const raw=String(value||'');
+  if(/^data:(?:image|video|audio)\/[a-z0-9.+-]+;base64,/i.test(raw))return raw.replace(/["'<>]/g,'');
+  try{const u=new URL(raw);return /^https?:$/.test(u.protocol)?esc(u.href).replace(/"/g,'&quot;').replace(/'/g,'&#39;'):'';}catch{return '';}
+}
+function imageOrVideoKind(url){
+  try{const p=decodeURIComponent(new URL(url).pathname).toLowerCase();
+    if(/\.(png|jpe?g|gif|webp|avif|bmp|tiff?)$/.test(p))return 'image';
+    if(/\.(mp4|webm|ogg|mov|m4v)$/.test(p))return 'video';
+  }catch{} return '';
+}
+function formatMessageText(value){
+  const text=String(value||''), re=/https?:\/\/[^\s<>"']+/gi; let html='',last=0,m;
+  while((m=re.exec(text))){
+    html+=esc(text.slice(last,m.index)); let url=m[0],tail='';
+    while(/[),.!?;:]$/.test(url)){tail=url.slice(-1)+tail;url=url.slice(0,-1);}
+    const safe=safeMediaSrc(url),kind=imageOrVideoKind(url);
+    if(safe&&kind==='image')html+=`<a class="media-link" href="${safe}" target="_blank" rel="noopener"><img src="${safe}" loading="lazy" alt="Изображение"></a>`;
+    else if(safe&&kind==='video')html+=`<video src="${safe}" controls playsinline preload="metadata" style="max-width:260px;border-radius:8px;display:block;margin-top:5px;"></video>`;
+    else if(safe)html+=`<a class="msg-link" href="${safe}" target="_blank" rel="noopener">${esc(url)}</a>`;
+    else html+=esc(url);
+    html+=esc(tail);last=re.lastIndex;
+  }
+  return (html+esc(text.slice(last))).replace(/\n/g,'<br>');
 }
 
 // SEND
@@ -884,22 +918,33 @@ window.send=async()=>{
   if(!txt&&files.length===0)return;
   let media=[];
   if(files.length>0){
-    toast('⬆️ Подготовка...');
+    toast('⬆️ Загружаю медиа...');
     for(const f of files){
       try{
-        const b64=await new Promise((res,rej)=>{
-          const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f);
-        });
-        const t=f.type.startsWith('image')?'image':f.type.startsWith('video')?'video':'audio';
-        media.push({url:b64,type:t,name:f.name});
-      }catch(e){toast('❌ Ошибка чтения файла');}
+        const t=f.type.startsWith('image')?'image':f.type.startsWith('video')?'video':f.type.startsWith('audio')?'audio':'';
+        if(!t)throw new Error('Неподдерживаемый формат файла: '+f.name);
+        const ext=(f.name.split('.').pop()||'bin').replace(/[^a-z0-9]/gi,'').toLowerCase();
+        const path=`media/${me.uid}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        const storageRef=st.ref(path);
+        await storageRef.put(f,{contentType:f.type||'application/octet-stream'});
+        const url=await storageRef.getDownloadURL();
+        media.push({url,type:t,name:f.name});
+      }catch(e){console.error('Media upload failed',e);toast(`❌ Не удалось загрузить файл: ${e.code||e.message||e}`,7000);return;}
     }
-    files=[]; g('chips').innerHTML='';
+  }
+  let messageText=txt;
+  const re=/https?:\/\/[^\s<>"']+/gi; let match;
+  while((match=re.exec(txt))){
+    let url=match[0];while(/[),.!?;:]$/.test(url))url=url.slice(0,-1);
+    const kind=imageOrVideoKind(url);
+    if(kind&&safeMediaSrc(url)){media.push({url,type:kind});messageText=messageText.replace(match[0],' ').replace(/\s{2,}/g,' ').trim();}
   }
   const path=curType==='general'?'messages/general':curType==='room'?`messages/rooms/${curCh}`:`messages/dms/${curCh}`;
-  const data={uid:me.uid,sender:me.name,gender:me.gender||'m',ts:Date.now(),text:txt};
+  const data={uid:me.uid,sender:me.name,gender:me.gender||'m',ts:Date.now(),text:messageText};
   if(media.length)data.media=media;
-  await push(ref(db,path),data);
+  try{await push(ref(db,path),data);}
+  catch(e){console.error('Message write failed',e);toast(`❌ Не удалось отправить сообщение: ${e.code||e.message||e}`,7000);return;}
+  files=[];g('chips').innerHTML='';
   const prev=txt||'📎 файл';
   if(curType==='general'){const p=g('pg');if(p)p.textContent=prev;}
   // Room and DM lastMessage not saved — privacy
@@ -937,10 +982,28 @@ window.hFiles=flist=>{
     const ch=document.createElement('div'); ch.className='chip';
     const ico=isImg?'🖼️':isVid?'🎬':'🎵';
     ch.innerHTML=`${ico} ${esc(f.name.slice(0,18))} <button class="cx" onclick="rmF(${files.length-1},this)">×</button>`;
+    if(isImg){const img=document.createElement('img');img.src=URL.createObjectURL(f);img.alt='Предпросмотр';img.style.cssText='width:32px;height:32px;object-fit:cover;border-radius:4px';ch.prepend(img);}
     g('chips').appendChild(ch);
   }
   g('fi').value='';
 };
+document.addEventListener('paste',e=>{
+  const ca=g('ca');if(!ca||!ca.contains(e.target))return;
+  const clip=e.clipboardData;if(!clip)return;
+  const pasted=[...(clip.items||[])].filter(i=>i.kind==='file'&&i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);
+  const chosen=pasted.length?pasted:[...(clip.files||[])].filter(f=>f.type.startsWith('image/'));
+  if(chosen.length){e.preventDefault();e.stopPropagation();hFiles(chosen);toast('🖼️ Изображение добавлено. Нажмите ➤ для отправки.');return;}
+  const html=clip.getData('text/html');if(!html)return;
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const dataImages=[...doc.images].map(i=>i.src).filter(src=>src.startsWith('data:image/'));
+  if(dataImages.length){
+    e.preventDefault();e.stopPropagation();
+    const asFile=(src,i)=>{const [head,data]=src.split(',');const mime=(head.match(/^data:([^;]+)/)||[])[1]||'image/png';const bytes=Uint8Array.from(atob(data),c=>c.charCodeAt(0));return new File([bytes],`clipboard-${i+1}.${mime.split('/')[1]||'png'}`,{type:mime});};
+    hFiles(dataImages.map(asFile));toast('🖼️ Изображение добавлено. Нажмите ➤ для отправки.');return;
+  }
+  const imageUrls=[...doc.images].map(i=>i.src).filter(src=>/^https?:\/\//i.test(src)&&imageOrVideoKind(src)==='image');
+  if(imageUrls.length){e.preventDefault();e.stopPropagation();g('mi').value=[g('mi').value.trim(),...imageUrls].filter(Boolean).join('\n');g('mi').dispatchEvent(new Event('input',{bubbles:true}));toast('🖼️ Ссылка добавлена. Нажмите ➤ для отправки.');}
+});
 window.rmF=(i,btn)=>{files[i]=null;btn.parentElement.remove();files=files.filter(Boolean);};
 
 // ROOMS
